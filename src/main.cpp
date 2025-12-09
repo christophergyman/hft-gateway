@@ -38,6 +38,11 @@ int main() {
     
     std::string input;
     int choice;
+    bool menuDisplayed = false;
+
+    // Display menu initially
+    displayMenu(serverSocket, serverClients, clientSocket, clientConnected);
+    menuDisplayed = true;
 
     while (true) {
         // Check for received messages and display them (non-blocking)
@@ -59,13 +64,18 @@ int main() {
         
         // Non-blocking menu display and input
         if (hasInput()) {
-            displayMenu(serverSocket, serverClients, clientSocket, clientConnected);
+            if (!menuDisplayed) {
+                displayMenu(serverSocket, serverClients, clientSocket, clientConnected);
+                menuDisplayed = true;
+            }
             std::getline(std::cin, input);
             
             if (input.empty()) {
+                menuDisplayed = false;
                 continue;
             }
             
+            menuDisplayed = false;
             choice = input[0] - '0';
             
             switch (choice) {
