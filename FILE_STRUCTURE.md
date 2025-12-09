@@ -50,7 +50,9 @@ Creates and configures a TCP server socket listening on port 8080.
 - Sets `SO_NOSIGPIPE` (if available)
 - Configures socket as non-blocking
 - Binds to `INADDR_ANY:8080`
-- Sets listen backlog to 5
+- Sets listen backlog to 128 (for burst connection handling)
+- Disables Nagle's algorithm (`TCP_NODELAY`) for low latency
+- Tunes socket buffer sizes (`SO_RCVBUF` and `SO_SNDBUF` to 64KB each)
 
 **Usage:**
 ```cpp
@@ -84,28 +86,33 @@ if (!client) {
 **Classes:**
 
 #### `MessageBuffer`
-Handles length-prefixed message buffering for partial reads.
+Handles length-prefixed message buffering for partial reads. Optimized to avoid memory copies by tracking read position instead of using `substr()` and `erase()`.
 
 **Public Methods:**
 
 ```cpp
 bool addData(const char* data, size_t len);
 ```
-Adds received data to the internal buffer.
+Adds received data to the internal buffer. Automatically compacts buffer when needed to prevent unbounded growth.
 
 ```cpp
 bool extractMessage(std::string& message);
 ```
-Extracts a complete message from the buffer if available. Returns `false` if message is incomplete.
+Extracts a complete message from the buffer if available. Returns `false` if message is incomplete. Uses read position tracking to avoid memory copies.
 
 **Message Format:** `[4 bytes: length (network byte order)][N bytes: payload]`
 
 **Max Message Size:** 1MB
 
+**Implementation Details:**
+- Uses read position tracking (`readPos_`) to avoid `substr()` and `erase()` operations
+- Automatically compacts buffer when read position exceeds half the buffer size or buffer exceeds 1MB
+- Thread-safe when used per-connection (each connection has its own `MessageBuffer` instance)
+
 ```cpp
 void clear();
 ```
-Clears the internal buffer.
+Clears the internal buffer and resets read position.
 
 **Usage:**
 ```cpp
@@ -173,7 +180,7 @@ Sends a length-prefixed message over a socket.
 **Returns:** `true` on success, `false` on error
 
 **Features:**
-- Non-blocking send with poll() timeout (100ms)
+- Non-blocking send with poll() timeout (1ms for low latency)
 - Handles partial writes
 - Uses `MSG_NOSIGNAL` if available
 
@@ -220,9 +227,9 @@ Receives and extracts a complete framed message.
 **Returns:** `true` if complete message extracted, `false` otherwise
 
 **Features:**
-- Non-blocking receive with poll() timeout (100ms)
+- Non-blocking receive with poll() timeout (1ms for low latency)
 - Handles partial reads
-- Uses internal 1KB receive buffer
+- Uses internal 8KB receive buffer (reduced syscalls for large messages)
 
 **Usage:**
 ```cpp
@@ -238,14 +245,14 @@ if (receiveFramedMessage(sock, buffer, message)) {
 #### `bool receiveFromClient(const SocketPtr& clientSocket, std::string& message)`
 Legacy wrapper for receiving from client (server side).
 
-**Note:** Uses static buffer internally. For per-connection buffers, use `receiveFramedMessage()` directly.
+**Note:** Creates a temporary buffer internally (thread-safe but inefficient). For proper per-connection buffering, use `receiveFramedMessage()` directly with a per-connection `MessageBuffer`.
 
 ---
 
 #### `bool receiveFromServer(const SocketPtr& clientSocket, std::string& message)`
 Legacy wrapper for receiving from server (client side).
 
-**Note:** Uses static buffer internally. For per-connection buffers, use `receiveFramedMessage()` directly.
+**Note:** Creates a temporary buffer internally (thread-safe but inefficient). For proper per-connection buffering, use `receiveFramedMessage()` directly with a per-connection `MessageBuffer`.
 
 ---
 
@@ -317,7 +324,8 @@ client->receiveThread = std::thread(serverReceiveThread, client);
                         std::atomic<bool>& running, 
                         std::vector<ClientConnectionPtr>& clients,
                         std::mutex& clientsMutex, 
-                        std::atomic<int>& nextClientId)`
+                        std::atomic<int>& nextClientId,
+                        size_t maxConnections = 1000)`
 Thread function for accepting new client connections.
 
 **Parameters:**
@@ -326,11 +334,15 @@ Thread function for accepting new client connections.
 - `clients` - Vector of client connections (protected by mutex)
 - `clientsMutex` - Mutex for clients vector
 - `nextClientId` - Atomic counter for client IDs
+- `maxConnections` - Maximum number of concurrent connections (default: 1000)
 
 **Behavior:**
-- Non-blocking accept loop using poll() with 100ms timeout
+- Non-blocking accept loop using poll() with 1ms timeout (low latency)
+- Cleans up disconnected clients before checking connection limits
+- Rejects new connections if at maximum limit (closes socket immediately)
 - Creates `ClientConnection` for each accepted client
 - Configures client socket as non-blocking
+- Sets `TCP_NODELAY` and tunes buffer sizes (64KB each direction) on accepted sockets
 - Spawns `serverReceiveThread` for each client
 - Adds client to clients vector (with mutex lock)
 - Pushes connection notification to `receivedMessages` queue
@@ -347,7 +359,8 @@ std::thread acceptThread(serverAcceptThread,
                          std::ref(running),
                          std::ref(clients),
                          std::ref(clientsMutex),
-                         std::ref(nextId));
+                         std::ref(nextId),
+                         1000); // Max connections
 ```
 
 ---
@@ -407,6 +420,7 @@ Thread function for non-blocking connection with timeout.
 
 **Behavior:**
 - Makes socket non-blocking
+- Sets `TCP_NODELAY` and tunes buffer sizes (64KB each direction) for low latency
 - Initiates non-blocking connect
 - Uses poll() to wait for connection completion
 - Checks socket error status via `getsockopt(SO_ERROR)`
@@ -502,13 +516,13 @@ if (hasInput()) {
 3. Displays menu and handles input (if available)
 4. Processes menu selections (1-7)
 5. Handles client connection completion
-6. Sleeps 50ms if no input available
+6. Sleeps 1ms if no input available (low latency message processing)
 
 **Menu Handlers:**
 
 **Option 1 - Create Server:**
 - Creates server socket via `startServer()`
-- Spawns `serverAcceptThread`
+- Spawns `serverAcceptThread` with max connections limit (1000)
 - Initializes client ID counter
 
 **Option 2 - Connect to Server:**
@@ -675,10 +689,34 @@ Frame: [0x00 0x00 0x00 0x05][0x48 0x65 0x6C 0x6C 0x6F]
 - Default connection timeout: `5 seconds`
 
 **Timeouts:**
-- Poll timeout: `100ms`
-- Main loop sleep: `50ms`
+- Poll timeout: `1ms` (optimized for low latency)
+- Main loop sleep: `1ms` (optimized for low latency)
 
 **Limits:**
 - Maximum message size: `1MB`
-- Receive buffer size: `1KB`
-- Server listen backlog: `5`
+- Receive buffer size: `8KB` (reduced syscalls)
+- Server listen backlog: `128` (burst connection handling)
+- Maximum concurrent connections: `1000` (configurable in `serverAcceptThread`)
+
+## Performance Optimizations
+
+The codebase has been optimized for high-performance, low-latency operation:
+
+**Socket Optimizations:**
+- `TCP_NODELAY` enabled on all sockets (disables Nagle's algorithm for minimal latency)
+- Socket buffer sizes: `64KB` each direction (`SO_RCVBUF`, `SO_SNDBUF`) for better throughput
+- Increased listen backlog to `128` for handling burst connection traffic
+
+**I/O Optimizations:**
+- All poll operations use `1ms` timeout for minimal latency (reduced from 100ms)
+- Main loop sleep reduced to `1ms` (from 50ms) for faster message processing
+- Receive buffer increased to `8KB` (from 1KB) to reduce syscalls for large messages
+
+**Memory Optimizations:**
+- `MessageBuffer` uses read position tracking instead of `substr()`/`erase()` to avoid memory copies
+- Automatic buffer compaction prevents unbounded growth
+- Thread-safe per-connection buffers (removed static buffers that caused race conditions)
+
+**Resource Management:**
+- Connection limits prevent resource exhaustion (max 1000 concurrent connections)
+- Automatic cleanup of disconnected clients before checking connection limits

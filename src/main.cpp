@@ -87,7 +87,8 @@ int main() {
                                                                std::ref(serverAcceptRunning),
                                                                std::ref(serverClients),
                                                                std::ref(serverClientsMutex),
-                                                               std::ref(nextClientId));
+                                                               std::ref(nextClientId),
+                                                               1000); // Max 1000 connections
                         std::cout << "[Success] Server socket created! Waiting for client connections...\n";
                     } else {
                         std::cout << "[Error] Failed to create server socket.\n";
@@ -280,8 +281,8 @@ int main() {
                     break;
             }
         } else {
-            // No input available, just check for messages and wait a bit
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            // No input available, minimal sleep to reduce CPU usage while maintaining low latency
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         
         // Check if connect completed

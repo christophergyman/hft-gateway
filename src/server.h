@@ -15,4 +15,5 @@ void serverAcceptThread(SocketPtr serverSocket,
                         std::atomic<bool>& running, 
                         std::vector<ClientConnectionPtr>& clients,
                         std::mutex& clientsMutex, 
-                        std::atomic<int>& nextClientId);
+                        std::atomic<int>& nextClientId,
+                        size_t maxConnections = 1000);

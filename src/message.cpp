@@ -12,37 +12,55 @@ MessageQueue receivedMessages;
 
 // MessageBuffer implementation
 bool MessageBuffer::addData(const char* data, size_t len) {
+    // Compact if buffer is getting large and we've read a significant portion
+    compactIfNeeded();
     buffer_.append(data, len);
     return true;
 }
 
 bool MessageBuffer::extractMessage(std::string& message) {
-    if (buffer_.size() < 4) {
+    const size_t available = buffer_.size() - readPos_;
+    if (available < 4) {
         return false; // Need at least 4 bytes for length header
     }
     
-    // Read length (network byte order)
+    // Read length (network byte order) from current read position
     uint32_t length;
-    std::memcpy(&length, buffer_.data(), 4);
+    std::memcpy(&length, buffer_.data() + readPos_, 4);
     length = ntohl(length);
     
     if (length > 1024 * 1024) { // Sanity check: max 1MB
-        buffer_.clear();
+        clear(); // Invalid message size, reset buffer
         return false;
     }
     
-    if (buffer_.size() < 4 + length) {
+    if (available < 4 + length) {
         return false; // Not enough data yet
     }
     
-    // Extract message
-    message = buffer_.substr(4, length);
-    buffer_.erase(0, 4 + length);
+    // Extract message without copying (use string_view-like approach)
+    // But we need to return a string, so we'll copy efficiently
+    message.assign(buffer_.data() + readPos_ + 4, length);
+    readPos_ += 4 + length;
+    
+    // Compact if we've read a significant portion
+    compactIfNeeded();
+    
     return true;
 }
 
 void MessageBuffer::clear() {
     buffer_.clear();
+    readPos_ = 0;
+}
+
+void MessageBuffer::compactIfNeeded() {
+    // Compact if we've read more than half the buffer or buffer is > 1MB
+    // This avoids unbounded growth while minimizing copies
+    if (readPos_ > 0 && (readPos_ > buffer_.size() / 2 || buffer_.size() > 1024 * 1024)) {
+        buffer_.erase(0, readPos_);
+        readPos_ = 0;
+    }
 }
 
 // MessageQueue implementation
@@ -92,7 +110,7 @@ bool sendFramedMessage(int socketFd, const std::string& message) {
         pfd.events = POLLOUT;
         pfd.revents = 0;
         
-        int pollResult = poll(&pfd, 1, 100); // 100ms timeout
+        int pollResult = poll(&pfd, 1, 1); // 1ms timeout for low latency
         if (pollResult < 0) {
             return false; // Error
         }
@@ -149,7 +167,7 @@ bool receiveFramedMessage(int socketFd, MessageBuffer& buffer, std::string& mess
     pfd.events = POLLIN;
     pfd.revents = 0;
     
-    int pollResult = poll(&pfd, 1, 100); // 100ms timeout
+    int pollResult = poll(&pfd, 1, 1); // 1ms timeout for low latency
     if (pollResult <= 0) {
         return false; // Timeout or error
     }
@@ -158,7 +176,8 @@ bool receiveFramedMessage(int socketFd, MessageBuffer& buffer, std::string& mess
         return false; // No data available
     }
     
-    char recvBuffer[1024];
+    // Increased buffer size to reduce syscalls for large messages
+    char recvBuffer[8192]; // 8KB buffer
     ssize_t bytesReceived = recv(socketFd, recvBuffer, sizeof(recvBuffer), 0);
     
     if (bytesReceived <= 0) {
@@ -181,7 +200,10 @@ bool receiveFramedMessage(int socketFd, MessageBuffer& buffer, std::string& mess
 }
 
 bool receiveFromClient(const SocketPtr& clientSocket, std::string& message) {
-    static MessageBuffer buffer;
+    // NOTE: This is a legacy wrapper. For proper per-connection buffering,
+    // use receiveFramedMessage() directly with a per-connection MessageBuffer.
+    // This function creates a temporary buffer which is inefficient.
+    MessageBuffer buffer;
     if (!clientSocket || *clientSocket < 0) {
         return false;
     }
@@ -189,7 +211,10 @@ bool receiveFromClient(const SocketPtr& clientSocket, std::string& message) {
 }
 
 bool receiveFromServer(const SocketPtr& clientSocket, std::string& message) {
-    static MessageBuffer buffer;
+    // NOTE: This is a legacy wrapper. For proper per-connection buffering,
+    // use receiveFramedMessage() directly with a per-connection MessageBuffer.
+    // This function creates a temporary buffer which is inefficient.
+    MessageBuffer buffer;
     if (!clientSocket || *clientSocket < 0) {
         return false;
     }

@@ -7,6 +7,7 @@
 #include <mutex>
 
 // Message buffer for handling length-prefixed messages
+// Optimized to avoid substr/erase operations by tracking read position
 class MessageBuffer {
 public:
     bool addData(const char* data, size_t len);
@@ -15,6 +16,10 @@ public:
 
 private:
     std::string buffer_;
+    size_t readPos_ = 0;  // Position to read from (avoids erase operations)
+    
+    // Compact buffer when it grows too large relative to read position
+    void compactIfNeeded();
 };
 
 // Thread-safe message queue for received messages

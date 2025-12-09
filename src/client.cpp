@@ -3,6 +3,7 @@
 #include "message.h"
 #include <sys/socket.h>
 #include <sys/poll.h>
+#include <netinet/tcp.h>
 #include <cerrno>
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -68,6 +69,15 @@ void clientConnectThread(SocketPtr clientSocket,
     #ifdef SO_NOSIGPIPE
     setsockopt(*clientSocket, SOL_SOCKET, SO_NOSIGPIPE, &opt, sizeof(opt));
     #endif
+    
+    // Disable Nagle's algorithm for low latency (TCP_NODELAY)
+    opt = 1;
+    setsockopt(*clientSocket, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
+    
+    // Tune socket buffer sizes for performance (64KB each direction)
+    int bufferSize = 64 * 1024;
+    setsockopt(*clientSocket, SOL_SOCKET, SO_RCVBUF, &bufferSize, sizeof(bufferSize));
+    setsockopt(*clientSocket, SOL_SOCKET, SO_SNDBUF, &bufferSize, sizeof(bufferSize));
     
     sockaddr_in serverAddress;
     serverAddress.sin_family = AF_INET;

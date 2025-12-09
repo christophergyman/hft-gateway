@@ -2,6 +2,7 @@
 #include <cstring>
 #include <cerrno>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <fcntl.h>
 #include <arpa/inet.h>
@@ -29,6 +30,15 @@ SocketPtr startServer() {
     #ifdef SO_NOSIGPIPE
     setsockopt(serverSocketFd, SOL_SOCKET, SO_NOSIGPIPE, &opt, sizeof(opt));
     #endif
+    
+    // Disable Nagle's algorithm for low latency (TCP_NODELAY)
+    opt = 1;
+    setsockopt(serverSocketFd, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
+    
+    // Tune socket buffer sizes for performance (64KB each direction)
+    int bufferSize = 64 * 1024;
+    setsockopt(serverSocketFd, SOL_SOCKET, SO_RCVBUF, &bufferSize, sizeof(bufferSize));
+    setsockopt(serverSocketFd, SOL_SOCKET, SO_SNDBUF, &bufferSize, sizeof(bufferSize));
 
     sockaddr_in serverAddress;
     serverAddress.sin_family = AF_INET;
@@ -42,7 +52,8 @@ SocketPtr startServer() {
         return nullptr;
     }
     
-    if (listen(serverSocketFd, 5) < 0) {
+    // Increased backlog for burst connection handling
+    if (listen(serverSocketFd, 128) < 0) {
         std::cerr << "Listen failed: " << strerror(errno) << std::endl;
         close(serverSocketFd);
         return nullptr;
