@@ -25,7 +25,8 @@ void clientReceiveThread(SocketPtr clientSocket,
     
     while (running && connected && clientSocket && *clientSocket >= 0) {
         if (receiveFramedMessage(*clientSocket, buffer, message)) {
-            receivedMessages.push("Server", message);
+            std::string formattedMsg = "[CLIENT] receives [SERVER] message [\"" + message + "\"]";
+            receivedMessages.push("Client", formattedMsg);
         } else {
             // Check if connection was closed
             struct pollfd pfd;

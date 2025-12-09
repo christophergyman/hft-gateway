@@ -50,7 +50,7 @@ int main() {
         // Check for received messages and display them (non-blocking)
         std::string source, message;
         while (receivedMessages.pop(source, message)) {
-            std::cout << "\n[Received from " << source << "] " << message << std::endl;
+            std::cout << "\n" << message << std::endl;
         }
         
         // Clean up disconnected clients
@@ -400,7 +400,7 @@ int main() {
                     bool hasMessages = false;
                     std::string source, msg;
                     while (receivedMessages.pop(source, msg)) {
-                        std::cout << "[" << source << "] " << msg << "\n";
+                        std::cout << msg << "\n";
                         hasMessages = true;
                     }
                     if (!hasMessages) {
