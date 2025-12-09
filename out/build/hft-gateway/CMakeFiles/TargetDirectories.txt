@@ -1,3 +1,0 @@
-/Users/chezu/Documents/github/hft-gateway/out/build/hft-gateway/CMakeFiles/hft-gateway.dir
-/Users/chezu/Documents/github/hft-gateway/out/build/hft-gateway/CMakeFiles/edit_cache.dir
-/Users/chezu/Documents/github/hft-gateway/out/build/hft-gateway/CMakeFiles/rebuild_cache.dir
