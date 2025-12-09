@@ -18,30 +18,32 @@
 
 int main() {
     SocketPtr serverSocket = nullptr;
-    SocketPtr clientSocket = nullptr;
     
     std::thread serverAcceptThreadHandle;
-    std::thread clientReceiveThreadHandle;
     std::thread clientConnectThreadHandle;
     
     std::atomic<bool> serverAcceptRunning(false);
-    std::atomic<bool> clientReceiveRunning(false);
     std::atomic<bool> clientConnectRunning(false);
-    std::atomic<bool> clientConnected(false);
     std::atomic<bool> connectComplete(false);
     std::atomic<int> nextClientId(1);
+    std::atomic<int> nextClientConnectionId(1);
     
     std::vector<ClientConnectionPtr> serverClients;
     std::mutex serverClientsMutex;
     
-    MessageBuffer clientBuffer;
+    std::vector<ClientConnectionPtr> clientConnections;
+    std::mutex clientConnectionsMutex;
+    
+    SocketPtr pendingClientSocket = nullptr;
+    bool pendingConnectSuccess = false;
+    int pendingConnectionId = 0;
     
     std::string input;
     int choice;
     bool menuDisplayed = false;
 
     // Display menu initially
-    displayMenu(serverSocket, serverClients, clientSocket, clientConnected);
+    displayMenu(serverSocket, serverClients, clientConnections);
     menuDisplayed = true;
 
     while (true) {
@@ -62,10 +64,21 @@ int main() {
                 serverClients.end());
         }
         
+        // Clean up disconnected client connections
+        {
+            std::lock_guard<std::mutex> lock(clientConnectionsMutex);
+            clientConnections.erase(
+                std::remove_if(clientConnections.begin(), clientConnections.end(),
+                    [](const ClientConnectionPtr& conn) {
+                        return !conn->connected && !conn->running;
+                    }),
+                clientConnections.end());
+        }
+        
         // Non-blocking menu display and input
         if (hasInput()) {
             if (!menuDisplayed) {
-                displayMenu(serverSocket, serverClients, clientSocket, clientConnected);
+                displayMenu(serverSocket, serverClients, clientConnections);
                 menuDisplayed = true;
             }
             std::getline(std::cin, input);
@@ -107,10 +120,6 @@ int main() {
                 }
                 
                 case 2: {
-                    if (clientSocket && clientConnected) {
-                        std::cout << "\n[Error] Client already connected. Disconnect first (option 6).\n";
-                        break;
-                    }
                     std::cout << "\n[Action] Connecting to server (127.0.0.1:8080)...\n";
                     
                     int clientSocketFd = socket(AF_INET, SOCK_STREAM, 0);
@@ -119,7 +128,8 @@ int main() {
                         break;
                     }
                     
-                    clientSocket = SocketPtr(new int(clientSocketFd), [](int* s){
+                    int connectionId = nextClientConnectionId++;
+                    auto tempSocket = SocketPtr(new int(clientSocketFd), [](int* s){
                         if (s && *s >= 0) {
                             close(*s);
                         }
@@ -129,15 +139,17 @@ int main() {
                     // Connect in background thread
                     clientConnectRunning = true;
                     connectComplete = false;
-                    bool localConnectSuccess = false;
+                    pendingClientSocket = tempSocket;
+                    pendingConnectSuccess = false;
+                    pendingConnectionId = connectionId;
                     clientConnectThreadHandle = std::thread(clientConnectThread,
-                                                           clientSocket,
+                                                           tempSocket,
                                                            std::ref(clientConnectRunning),
                                                            std::ref(connectComplete),
-                                                           std::ref(localConnectSuccess),
+                                                           std::ref(pendingConnectSuccess),
                                                            "127.0.0.1", 5);
                     
-                    std::cout << "[Info] Connection attempt in progress...\n";
+                    std::cout << "[Info] Connection attempt " << connectionId << " in progress...\n";
                     break;
                 }
                 
@@ -176,11 +188,53 @@ int main() {
                 }
                 
                 case 4: {
-                    if (!clientSocket || !clientConnected) {
-                        std::cout << "\n[Error] Client socket not connected. Please connect to server first (option 2).\n";
+                    // Get list of connected clients (with lock)
+                    std::vector<ClientConnectionPtr> connectedClients;
+                    {
+                        std::lock_guard<std::mutex> lock(clientConnectionsMutex);
+                        if (clientConnections.empty()) {
+                            std::cout << "\n[Error] No client connections. Please connect to server first (option 2).\n";
+                            break;
+                        }
+                        
+                        // Filter to only connected clients
+                        for (auto& conn : clientConnections) {
+                            if (conn->connected && conn->socket) {
+                                connectedClients.push_back(conn);
+                            }
+                        }
+                    }
+                    
+                    if (connectedClients.empty()) {
+                        std::cout << "\n[Error] No active client connections. Please connect to server first (option 2).\n";
                         break;
                     }
-                    std::cout << "\n[Action] Enter message to send from client to server: ";
+                    
+                    // Display available clients (no lock needed for read-only)
+                    std::cout << "\n[Action] Available client connections:\n";
+                    for (size_t i = 0; i < connectedClients.size(); ++i) {
+                        std::cout << "  " << (i + 1) << ". Client ID " << connectedClients[i]->id << "\n";
+                    }
+                    std::cout << "Select client (1-" << connectedClients.size() << "): ";
+                    std::string clientChoiceStr;
+                    std::getline(std::cin, clientChoiceStr);
+                    
+                    int clientChoice = 0;
+                    try {
+                        clientChoice = std::stoi(clientChoiceStr);
+                    } catch (...) {
+                        std::cout << "[Error] Invalid client selection.\n";
+                        break;
+                    }
+                    
+                    if (clientChoice < 1 || clientChoice > static_cast<int>(connectedClients.size())) {
+                        std::cout << "[Error] Invalid client selection.\n";
+                        break;
+                    }
+                    
+                    auto selectedClient = connectedClients[clientChoice - 1];
+                    
+                    std::cout << "\n[Action] Enter message to send from client " << selectedClient->id << " to server: ";
                     std::string message;
                     std::getline(std::cin, message);
                     if (message.empty()) {
@@ -188,11 +242,11 @@ int main() {
                         break;
                     }
                     auto msgPtr = std::make_shared<std::string>(message);
-                    if (sendToServer(clientSocket, msgPtr)) {
-                        std::cout << "[Success] Message sent successfully!\n";
+                    if (sendToServer(selectedClient->socket, msgPtr)) {
+                        std::cout << "[Success] Message sent successfully from client " << selectedClient->id << "!\n";
                     } else {
-                        std::cout << "[Error] Failed to send message.\n";
-                        clientConnected = false;
+                        std::cout << "[Error] Failed to send message from client " << selectedClient->id << ".\n";
+                        selectedClient->connected = false;
                     }
                     break;
                 }
@@ -240,22 +294,96 @@ int main() {
                 }
                 
                 case 6: {
-                    if (!clientSocket) {
-                        std::cout << "\n[Error] No client connection to stop.\n";
+                    // Get list of connected clients (with lock)
+                    std::vector<ClientConnectionPtr> connectedClients;
+                    {
+                        std::lock_guard<std::mutex> lock(clientConnectionsMutex);
+                        if (clientConnections.empty()) {
+                            std::cout << "\n[Error] No client connections to stop.\n";
+                            break;
+                        }
+                        
+                        // Filter to only connected clients
+                        for (auto& conn : clientConnections) {
+                            if (conn->connected && conn->socket) {
+                                connectedClients.push_back(conn);
+                            }
+                        }
+                    }
+                    
+                    if (connectedClients.empty()) {
+                        std::cout << "\n[Error] No active client connections to stop.\n";
                         break;
                     }
                     
-                    // Stop receive thread
-                    clientReceiveRunning = false;
-                    clientConnected = false;
+                    // Display available clients (no lock needed for read-only)
+                    std::cout << "\n[Action] Available client connections:\n";
+                    for (size_t i = 0; i < connectedClients.size(); ++i) {
+                        std::cout << "  " << (i + 1) << ". Client ID " << connectedClients[i]->id << "\n";
+                    }
+                    std::cout << "  " << (connectedClients.size() + 1) << ". Disconnect all\n";
+                    std::cout << "Select client to disconnect (1-" << (connectedClients.size() + 1) << "): ";
+                    std::string clientChoiceStr;
+                    std::getline(std::cin, clientChoiceStr);
                     
-                    // Close socket before joining to break blocking calls
-                    if (clientSocket) {
-                        close(*clientSocket);
+                    int clientChoice = 0;
+                    try {
+                        clientChoice = std::stoi(clientChoiceStr);
+                    } catch (...) {
+                        std::cout << "[Error] Invalid client selection.\n";
+                        break;
                     }
                     
-                    if (clientReceiveThreadHandle.joinable()) {
-                        clientReceiveThreadHandle.join();
+                    if (clientChoice < 1 || clientChoice > static_cast<int>(connectedClients.size() + 1)) {
+                        std::cout << "[Error] Invalid client selection.\n";
+                        break;
+                    }
+                    
+                    std::vector<ClientConnectionPtr> toDisconnect;
+                    if (clientChoice == static_cast<int>(connectedClients.size() + 1)) {
+                        // Disconnect all
+                        toDisconnect = connectedClients;
+                    } else {
+                        // Disconnect specific client
+                        toDisconnect.push_back(connectedClients[clientChoice - 1]);
+                    }
+                    
+                    // Stop connections (no lock needed - we're modifying shared_ptr objects)
+                    for (auto& conn : toDisconnect) {
+                        conn->running = false;
+                        conn->connected = false;
+                        if (conn->socket) {
+                            close(*conn->socket);
+                        }
+                    }
+                    
+                    // Remove from vector (with lock)
+                    {
+                        std::lock_guard<std::mutex> lock(clientConnectionsMutex);
+                        if (clientChoice == static_cast<int>(connectedClients.size() + 1)) {
+                            clientConnections.clear();
+                        } else {
+                            int selectedId = connectedClients[clientChoice - 1]->id;
+                            clientConnections.erase(
+                                std::remove_if(clientConnections.begin(), clientConnections.end(),
+                                    [selectedId](const ClientConnectionPtr& conn) {
+                                        return conn->id == selectedId;
+                                    }),
+                                clientConnections.end());
+                        }
+                    }
+                    
+                    // Join threads (no lock needed)
+                    for (auto& conn : toDisconnect) {
+                        if (conn->receiveThread.joinable()) {
+                            conn->receiveThread.join();
+                        }
+                    }
+                    
+                    if (clientChoice == static_cast<int>(connectedClients.size() + 1)) {
+                        std::cout << "\n[Success] All client connections stopped.\n";
+                    } else {
+                        std::cout << "\n[Success] Client connection " << connectedClients[clientChoice - 1]->id << " stopped.\n";
                     }
                     
                     // Stop connect thread if running
@@ -263,10 +391,6 @@ int main() {
                     if (clientConnectThreadHandle.joinable()) {
                         clientConnectThreadHandle.join();
                     }
-                    
-                    clientSocket.reset();
-                    clientBuffer.clear();
-                    std::cout << "\n[Success] Client connection stopped.\n";
                     break;
                 }
                 
@@ -296,55 +420,64 @@ int main() {
         }
         
         // Check if connect completed
-        if (connectComplete && clientSocket && !clientReceiveRunning) {
+        if (connectComplete && pendingClientSocket) {
             if (clientConnectThreadHandle.joinable()) {
                 clientConnectThreadHandle.join();
             }
             
             // Get connection result from thread
-            // Note: We need to check the socket state since the bool reference
-            // might not be accessible. Check socket error status.
             int error = 0;
             socklen_t len = sizeof(error);
             bool success = false;
-            if (getsockopt(*clientSocket, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error == 0) {
+            if (getsockopt(*pendingClientSocket, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error == 0) {
                 success = true;
             }
             
-            if (success) {
-                // Connection successful
-                clientReceiveRunning = true;
-                clientConnected = true;
-                clientBuffer.clear();
-                clientReceiveThreadHandle = std::thread(clientReceiveThread,
-                                                        clientSocket,
-                                                        std::ref(clientReceiveRunning),
-                                                        std::ref(clientConnected),
-                                                        std::ref(clientBuffer));
-                std::cout << "\n[Success] Connected to server!\n";
+            if (success && pendingConnectSuccess) {
+                // Connection successful - create ClientConnection
+                int connectionId = pendingConnectionId;
+                auto clientConn = std::make_shared<ClientConnection>(connectionId);
+                clientConn->socket = pendingClientSocket;
+                clientConn->running = true;
+                clientConn->connected = true;
+                
+                // Start receive thread
+                clientConn->receiveThread = std::thread(clientReceiveThread,
+                                                        clientConn->socket,
+                                                        std::ref(clientConn->running),
+                                                        std::ref(clientConn->connected),
+                                                        std::ref(clientConn->buffer));
+                
+                // Add to client connections list
+                {
+                    std::lock_guard<std::mutex> lock(clientConnectionsMutex);
+                    clientConnections.push_back(clientConn);
+                }
+                
+                std::cout << "\n[Success] Client connection " << connectionId << " connected to server!\n";
             } else {
                 std::cout << "\n[Error] Failed to connect to server.\n";
-                clientSocket.reset();
             }
+            
+            pendingClientSocket.reset();
+            pendingConnectionId = 0;
             connectComplete = false;
         }
     }
     
     // Cleanup on exit - close sockets before joining threads
     serverAcceptRunning = false;
-    clientReceiveRunning = false;
     clientConnectRunning = false;
-    clientConnected = false;
     
     // Close sockets first to break blocking calls
     if (serverSocket) {
         close(*serverSocket);
     }
-    if (clientSocket) {
-        close(*clientSocket);
+    if (pendingClientSocket) {
+        close(*pendingClientSocket);
     }
     
-    // Stop all client connections
+    // Stop all server client connections
     {
         std::lock_guard<std::mutex> lock(serverClientsMutex);
         for (auto& client : serverClients) {
@@ -356,22 +489,42 @@ int main() {
         }
     }
     
+    // Stop all client connections
+    {
+        std::lock_guard<std::mutex> lock(clientConnectionsMutex);
+        for (auto& conn : clientConnections) {
+            conn->running = false;
+            conn->connected = false;
+            if (conn->socket) {
+                close(*conn->socket);
+            }
+        }
+    }
+    
     // Join threads
     if (serverAcceptThreadHandle.joinable()) {
         serverAcceptThreadHandle.join();
-    }
-    if (clientReceiveThreadHandle.joinable()) {
-        clientReceiveThreadHandle.join();
     }
     if (clientConnectThreadHandle.joinable()) {
         clientConnectThreadHandle.join();
     }
     
+    // Join server client receive threads
     {
         std::lock_guard<std::mutex> lock(serverClientsMutex);
         for (auto& client : serverClients) {
             if (client->receiveThread.joinable()) {
                 client->receiveThread.join();
+            }
+        }
+    }
+    
+    // Join client connection receive threads
+    {
+        std::lock_guard<std::mutex> lock(clientConnectionsMutex);
+        for (auto& conn : clientConnections) {
+            if (conn->receiveThread.joinable()) {
+                conn->receiveThread.join();
             }
         }
     }

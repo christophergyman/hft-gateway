@@ -7,9 +7,8 @@
 
 // Display the main menu
 void displayMenu(SocketPtr serverSocket, 
-                 const std::vector<ClientConnectionPtr>& clients,
-                 SocketPtr clientSocket, 
-                 std::atomic<bool>& clientConnected);
+                 const std::vector<ClientConnectionPtr>& serverClients,
+                 const std::vector<ClientConnectionPtr>& clientConnections);
 
 // Check if stdin has input available (non-blocking)
 bool hasInput();
