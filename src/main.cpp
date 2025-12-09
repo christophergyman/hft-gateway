@@ -41,6 +41,11 @@ int main() {
     std::string input;
     int choice;
     bool menuDisplayed = false;
+    
+    // Message history for viewing past messages
+    std::vector<std::string> messageHistory;
+    std::mutex messageHistoryMutex;
+    const size_t MAX_HISTORY_SIZE = 1000; // Limit history size
 
     // Display menu initially
     displayMenu(serverSocket, serverClients, clientConnections);
@@ -51,6 +56,15 @@ int main() {
         std::string source, message;
         while (receivedMessages.pop(source, message)) {
             std::cout << "\n" << message << std::endl;
+            // Store in history
+            {
+                std::lock_guard<std::mutex> lock(messageHistoryMutex);
+                messageHistory.push_back(message);
+                // Limit history size to prevent unbounded growth
+                if (messageHistory.size() > MAX_HISTORY_SIZE) {
+                    messageHistory.erase(messageHistory.begin());
+                }
+            }
         }
         
         // Clean up disconnected clients
@@ -397,14 +411,15 @@ int main() {
                 case 7: {
                     std::cout << "\n[Received Messages]\n";
                     std::cout << "========================================\n";
-                    bool hasMessages = false;
-                    std::string source, msg;
-                    while (receivedMessages.pop(source, msg)) {
-                        std::cout << msg << "\n";
-                        hasMessages = true;
-                    }
-                    if (!hasMessages) {
-                        std::cout << "No messages received yet.\n";
+                    {
+                        std::lock_guard<std::mutex> lock(messageHistoryMutex);
+                        if (messageHistory.empty()) {
+                            std::cout << "No messages received yet.\n";
+                        } else {
+                            for (const auto& msg : messageHistory) {
+                                std::cout << msg << "\n";
+                            }
+                        }
                     }
                     std::cout << "========================================\n";
                     break;
