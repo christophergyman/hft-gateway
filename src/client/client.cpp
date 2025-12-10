@@ -35,7 +35,6 @@ void clientReceiveThread(SocketPtr clientSocket,
             pfd.revents = 0;
             
             if (poll(&pfd, 1, 0) < 0 || (pfd.revents & (POLLERR | POLLHUP))) {
-                // Connection error or closed
                 connected = false;
                 receivedMessages.push("System", "Server disconnected");
                 break;
@@ -58,24 +57,19 @@ void clientConnectThread(SocketPtr clientSocket,
         return;
     }
     
-    // Make socket non-blocking
     if (!makeNonBlocking(*clientSocket)) {
         connectSuccess = false;
         connectComplete = true;
         return;
     }
     
-    // Prevent SIGPIPE
+    // Configure socket: TCP_NODELAY, 64KB buffers, SO_NOSIGPIPE
     int opt = 1;
     #ifdef SO_NOSIGPIPE
     setsockopt(*clientSocket, SOL_SOCKET, SO_NOSIGPIPE, &opt, sizeof(opt));
     #endif
-    
-    // Disable Nagle's algorithm for low latency (TCP_NODELAY)
     opt = 1;
     setsockopt(*clientSocket, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
-    
-    // Tune socket buffer sizes for performance (64KB each direction)
     int bufferSize = 64 * 1024;
     setsockopt(*clientSocket, SOL_SOCKET, SO_RCVBUF, &bufferSize, sizeof(bufferSize));
     setsockopt(*clientSocket, SOL_SOCKET, SO_SNDBUF, &bufferSize, sizeof(bufferSize));
@@ -83,18 +77,14 @@ void clientConnectThread(SocketPtr clientSocket,
     sockaddr_in serverAddress;
     serverAddress.sin_family = AF_INET;
     serverAddress.sin_port = htons(8080);
-    
-    // Parse server address
     if (inet_pton(AF_INET, serverAddr.c_str(), &serverAddress.sin_addr) <= 0) {
-        // Fallback to loopback if parsing fails
         serverAddress.sin_addr.s_addr = inet_addr("127.0.0.1");
     }
     
-    // Initiate non-blocking connect
+    // Non-blocking connect
     int result = connect(*clientSocket, (struct sockaddr *)&serverAddress, sizeof(serverAddress));
     
     if (result == 0) {
-        // Connected immediately
         connectSuccess = true;
         connectComplete = true;
         return;
@@ -106,7 +96,7 @@ void clientConnectThread(SocketPtr clientSocket,
         return;
     }
     
-    // Wait for connection with timeout using poll
+    // Wait for connection with timeout
     struct pollfd pfd;
     pfd.fd = *clientSocket;
     pfd.events = POLLOUT;
@@ -134,7 +124,6 @@ void clientConnectThread(SocketPtr clientSocket,
         }
         
         if (pollResult > 0 && (pfd.revents & POLLOUT)) {
-            // Check if connection succeeded
             int error = 0;
             socklen_t len = sizeof(error);
             if (getsockopt(*clientSocket, SOL_SOCKET, SO_ERROR, &error, &len) == 0 && error == 0) {

@@ -9,16 +9,17 @@ void displayMenu(SocketPtr serverSocket,
     std::cout << "\n========================================\n";
     std::cout << "     HFT Gateway Control Menu\n";
     std::cout << "========================================\n";
+    
     std::cout << "  Server: " << (serverSocket ? "Listening" : "Not running");
     if (serverSocket && !serverClients.empty()) {
         std::cout << " (" << serverClients.size() << " client(s) connected)";
     }
     std::cout << "\n";
+    
     std::cout << "  Client: ";
     if (clientConnections.empty()) {
         std::cout << "Not connected";
     } else {
-        // Count connected clients
         int connectedCount = 0;
         std::vector<int> connectedIds;
         for (const auto& conn : clientConnections) {
@@ -27,10 +28,13 @@ void displayMenu(SocketPtr serverSocket,
                 connectedIds.push_back(conn->id);
             }
         }
+        
         if (connectedCount == 0) {
             std::cout << "Not connected";
         } else {
             std::cout << connectedCount << " connected";
+            
+            // Limit to 5 IDs for readability
             if (connectedCount <= 5) {
                 std::cout << " (IDs: ";
                 for (size_t i = 0; i < connectedIds.size(); ++i) {
@@ -53,6 +57,7 @@ void displayMenu(SocketPtr serverSocket,
         }
     }
     std::cout << "\n";
+    
     std::cout << "========================================\n";
     std::cout << "  1. Create server socket\n";
     std::cout << "  2. Connect to server\n";

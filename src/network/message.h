@@ -1,28 +1,61 @@
 #pragma once
 
+/**
+ * @file message.h
+ * @brief Message framing, buffering, and transmission utilities
+ * 
+ * Implements length-prefixed message protocol with optimized buffering
+ * for partial reads/writes and thread-safe message queues.
+ */
+
 #include "socket_utils.h"
 #include <string>
 #include <memory>
 #include <queue>
 #include <mutex>
 
-// Message buffer for handling length-prefixed messages
-// Optimized to avoid substr/erase operations by tracking read position
+/**
+ * @class MessageBuffer
+ * @brief Buffers length-prefixed messages for partial reads
+ * 
+ * Uses read position tracking to avoid memory copies. Optimized for high throughput.
+ * Format: [4 bytes: length (network byte order)][N bytes: payload]
+ * Max size: 1MB
+ */
 class MessageBuffer {
 public:
+    /**
+     * @brief Adds received data to buffer (auto-compacts if needed)
+     */
     bool addData(const char* data, size_t len);
+    
+    /**
+     * @brief Extracts complete message if available
+     * 
+     * @param message Output parameter
+     * @return true if complete message extracted, false if incomplete
+     */
     bool extractMessage(std::string& message);
+    
+    /**
+     * @brief Clears buffer and resets read position
+     */
     void clear();
 
 private:
-    std::string buffer_;
-    size_t readPos_ = 0;  // Position to read from (avoids erase operations)
+    std::string buffer_;        ///< Internal buffer storing received data
+    size_t readPos_ = 0;        ///< Current read position (avoids erase operations)
     
-    // Compact buffer when it grows too large relative to read position
+    /**
+     * @brief Compacts buffer when readPos_ > half buffer size or buffer > 1MB
+     */
     void compactIfNeeded();
 };
 
-// Thread-safe message queue for received messages
+/**
+ * @class MessageQueue
+ * @brief Thread-safe message queue for inter-thread communication
+ */
 class MessageQueue {
 public:
     void push(const std::string& source, const std::string& message);
@@ -30,27 +63,41 @@ public:
     void clear();
 
 private:
-    std::queue<std::pair<std::string, std::string>> messages_;
-    std::mutex mutex_;
+    std::queue<std::pair<std::string, std::string>> messages_;  ///< Internal message queue
+    std::mutex mutex_;  ///< Mutex for thread-safe operations
 };
 
-// Global message queue instance
+/**
+ * @brief Global message queue - receive threads push, main thread pops
+ */
 extern MessageQueue receivedMessages;
 
-// Send message with length prefix (framed protocol)
+/**
+ * @brief Sends length-prefixed message: [4 bytes: length][N bytes: payload]
+ * 
+ * Non-blocking send with 1ms poll timeout. Handles partial writes.
+ */
 bool sendFramedMessage(int socketFd, const std::string& message);
 
-// Send message from server to client
 bool sendToClient(const SocketPtr& clientSocket, const std::shared_ptr<const std::string>& message);
-
-// Send message from client to server
 bool sendToServer(const SocketPtr& clientSocket, const std::shared_ptr<const std::string>& message);
 
-// Receive framed message using buffer
+/**
+ * @brief Receives and extracts complete framed message
+ * 
+ * Non-blocking receive with 1ms poll timeout. Handles partial reads.
+ * Buffer should be per-connection.
+ */
 bool receiveFramedMessage(int socketFd, MessageBuffer& buffer, std::string& message);
 
-// Receive message from client (server side) - legacy wrapper
+/**
+ * @deprecated Legacy wrapper - creates temporary buffer (inefficient).
+ * Use receiveFramedMessage() with per-connection MessageBuffer instead.
+ */
 bool receiveFromClient(const SocketPtr& clientSocket, std::string& message);
 
-// Receive message from server (client side) - legacy wrapper
+/**
+ * @deprecated Legacy wrapper - creates temporary buffer (inefficient).
+ * Use receiveFramedMessage() with per-connection MessageBuffer instead.
+ */
 bool receiveFromServer(const SocketPtr& clientSocket, std::string& message);

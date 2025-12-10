@@ -1,14 +1,23 @@
 #pragma once
 
+/**
+ * @file ui.h
+ * @brief User interface and menu handling functions
+ */
+
 #include "../network/socket_utils.h"
 #include "../network/connection.h"
 #include <vector>
 #include <atomic>
 
-// Display the main menu
+/**
+ * @brief Displays main control menu with current server/client status
+ */
 void displayMenu(SocketPtr serverSocket, 
                  const std::vector<ClientConnectionPtr>& serverClients,
                  const std::vector<ClientConnectionPtr>& clientConnections);
 
-// Check if stdin has input available (non-blocking)
+/**
+ * @brief Non-blocking check for stdin input availability
+ */
 bool hasInput();
