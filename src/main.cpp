@@ -1,9 +1,9 @@
-#include "socket_utils.h"
-#include "message.h"
-#include "connection.h"
-#include "server.h"
-#include "client.h"
-#include "ui.h"
+#include "network/socket_utils.h"
+#include "network/message.h"
+#include "network/connection.h"
+#include "server/server.h"
+#include "client/client.h"
+#include "ui/ui.h"
 #include <iostream>
 #include <thread>
 #include <atomic>

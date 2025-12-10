@@ -1,6 +1,6 @@
 #include "client.h"
-#include "socket_utils.h"
-#include "message.h"
+#include "../network/socket_utils.h"
+#include "../network/message.h"
 #include <sys/socket.h>
 #include <sys/poll.h>
 #include <netinet/tcp.h>

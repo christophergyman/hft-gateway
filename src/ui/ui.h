@@ -1,7 +1,7 @@
 #pragma once
 
-#include "socket_utils.h"
-#include "connection.h"
+#include "../network/socket_utils.h"
+#include "../network/connection.h"
 #include <vector>
 #include <atomic>
 

@@ -1,8 +1,8 @@
 #pragma once
 
-#include "socket_utils.h"
-#include "connection.h"
-#include "message.h"
+#include "../network/socket_utils.h"
+#include "../network/connection.h"
+#include "../network/message.h"
 #include <atomic>
 #include <vector>
 #include <mutex>

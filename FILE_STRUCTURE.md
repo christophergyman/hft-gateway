@@ -4,18 +4,22 @@
 
 ```
 src/
-├── main.cpp              # Application entry point and control loop
-├── socket_utils.h/cpp    # Socket operations and utilities
-├── message.h/cpp         # Message framing, buffering, and transmission
-├── connection.h/cpp      # Client connection management
-├── server.h/cpp          # Server-side thread functions
-├── client.h/cpp          # Client-side thread functions
-└── ui.h/cpp              # User interface and menu handling
+├── main.cpp                    # Application entry point and control loop
+├── network/                    # Core networking components
+│   ├── socket_utils.h/cpp     # Socket operations and utilities
+│   ├── message.h/cpp          # Message framing, buffering, and transmission
+│   └── connection.h/cpp       # Client connection management
+├── server/                     # Server-side components
+│   └── server.h/cpp           # Server-side thread functions
+├── client/                     # Client-side components
+│   └── client.h/cpp          # Client-side thread functions
+└── ui/                         # User interface components
+    └── ui.h/cpp               # User interface and menu handling
 ```
 
 ## Module Reference
 
-### `socket_utils.h/cpp`
+### `network/socket_utils.h/cpp`
 
 **Type Definitions:**
 ```cpp
@@ -81,7 +85,7 @@ if (!client) {
 
 ---
 
-### `message.h/cpp`
+### `network/message.h/cpp`
 
 **Classes:**
 
@@ -256,7 +260,7 @@ Legacy wrapper for receiving from server (client side).
 
 ---
 
-### `connection.h/cpp`
+### `network/connection.h/cpp`
 
 **Types:**
 
@@ -294,7 +298,7 @@ client->receiveThread = std::thread(serverReceiveThread, client);
 
 ---
 
-### `server.h/cpp`
+### `server/server.h/cpp`
 
 **Functions:**
 
@@ -365,7 +369,7 @@ std::thread acceptThread(serverAcceptThread,
 
 ---
 
-### `client.h/cpp`
+### `client/client.h/cpp`
 
 **Functions:**
 
@@ -456,7 +460,7 @@ if (success) {
 
 ---
 
-### `ui.h/cpp`
+### `ui/ui.h/cpp`
 
 **Functions:**
 
@@ -569,12 +573,12 @@ if (hasInput()) {
 ```cmake
 add_executable(hft-gateway
     ./src/main.cpp
-    ./src/socket_utils.cpp
-    ./src/message.cpp
-    ./src/connection.cpp
-    ./src/server.cpp
-    ./src/client.cpp
-    ./src/ui.cpp
+    ./src/network/socket_utils.cpp
+    ./src/network/message.cpp
+    ./src/network/connection.cpp
+    ./src/server/server.cpp
+    ./src/client/client.cpp
+    ./src/ui/ui.cpp
 )
 ```
 
@@ -590,28 +594,28 @@ make
 ## Module Dependencies
 
 ```
-socket_utils.h/cpp
+network/socket_utils.h/cpp
     └── (no dependencies)
 
-message.h/cpp
-    └── socket_utils.h
+network/message.h/cpp
+    └── network/socket_utils.h
 
-connection.h/cpp
-    ├── socket_utils.h
-    └── message.h
+network/connection.h/cpp
+    ├── network/socket_utils.h
+    └── network/message.h
 
-server.h/cpp
-    ├── socket_utils.h
-    ├── connection.h
-    └── message.h
+server/server.h/cpp
+    ├── network/socket_utils.h
+    ├── network/connection.h
+    └── network/message.h
 
-client.h/cpp
-    ├── socket_utils.h
-    └── message.h
+client/client.h/cpp
+    ├── network/socket_utils.h
+    └── network/message.h
 
-ui.h/cpp
-    ├── socket_utils.h
-    └── connection.h
+ui/ui.h/cpp
+    ├── network/socket_utils.h
+    └── network/connection.h
 
 main.cpp
     └── (all modules)
